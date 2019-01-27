@@ -67,10 +67,13 @@ def letPeopleMove():
         
         desiredX = person.x + r*desiredX/3
         desiredY = person.y + r*desiredY/3
-        newLoc = exit1Dist[int(desiredY)][int(desiredX)]
-        if newLoc < 100000:
-            person.x = desiredX
-            person.y = desiredY
+        try:
+            newLoc = exit1Dist[int(desiredY)][int(desiredX)]
+            if newLoc < 100000:
+                person.x = desiredX
+                person.y = desiredY
+        except Exception:
+            pass
 
         if exit1Dist[y][x] < 2:
             person.exited = True
@@ -229,7 +232,7 @@ def computeShortestPaths(map, exitColor):
 ################################################################################
 
 
-mapName = 'testmap'
+mapName = 'mona_lisa_rooms'
 map = loadMap(mapName)
 
 wallDist, wallDirs, exit1Dist, exit1Dirs = (None,None,None,None)
