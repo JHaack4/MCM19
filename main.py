@@ -7,6 +7,7 @@ import pickle as pkl
 
 exitColor = [0,0,255]
 baseColor = [0,0,0]
+spawnColor = [0,255,0]
 backgroundColor = [255,255,255]
 
 draw = True
@@ -18,7 +19,8 @@ cv2.namedWindow('display')
 
 personList = []
 r = 3 # resolution in pixels/meter
-spawnRate = 0.001
+spawnRate = 0.04
+collisionForceThreshold = 2
 
 class Person:
 
@@ -26,7 +28,7 @@ class Person:
         self.x = x
         self.y = y
         self.closePeople = []
-        self.speed = (1 + 2*random.random())
+        self.speed = (.5 + random.random())
         self.exited = False
         self.radius = (0.25 + 0.5*random.random())
 
@@ -56,7 +58,13 @@ def letPeopleMove():
             desiredY += ydir / (dist+1)
             if dist < person.radius + otherPerson.radius + 1:
                 numCollisions += 1
-        
+
+        desiredDist = ((desiredX)**2 + (desiredY)**2)**(.5)
+        if desiredDist > collisionForceThreshold:
+            desiredX = collisionForceThreshold*desiredX/desiredDist
+            desiredY = collisionForceThreshold*desiredY/desiredDist
+
+
         speedFactor = 1 / (numCollisions + 1)
 
         desiredX += person.speed * speedFactor * shortestDir[1] \
@@ -64,7 +72,7 @@ def letPeopleMove():
         desiredY += person.speed * speedFactor * shortestDir[0] \
                             + wallAvoidanceFactor * avoidWallsDir[0]
 
-        
+
         desiredX = person.x + r*desiredX/3
         desiredY = person.y + r*desiredY/3
         try:
@@ -82,14 +90,14 @@ def spawnPeople():
 
     for y in range(map.shape[0]):
         for x in range(map.shape[1]):
-            if not (map[y][x]==backgroundColor).all():
+            if (map[y][x]==spawnColor).all():
                 if random.random() < spawnRate:
                     p = Person(x,y)
                     personList.append(p)
-                
+
 def determineClosePeople():
     b = 20 # bin size
-    distThresh = 15 # distance needed to be "close"
+    distThresh = 5 # distance needed to be "close"
     xx = int(map.shape[1] / b) + 2
     yy = int(map.shape[0] / b) + 2
     bins = [[[] for j in range(xx)] for i in range(yy)]
@@ -98,7 +106,7 @@ def determineClosePeople():
             continue
         p1.closePeople = []
         bins[int(p1.y/b)][int(p1.x/b)].append(i)
-    
+
     for y in range(yy-1):
         for x in range(xx-1):
             # bin vs. itself
@@ -168,7 +176,7 @@ def computeDistanceToWalls(map, wallColor):
             continue
         visited[y][x] = 1
 
-        a = [grid[y-1][x]+1, grid[y+1][x]+1, grid[y][x+1]+1, 
+        a = [grid[y-1][x]+1, grid[y+1][x]+1, grid[y][x+1]+1,
                     grid[y][x-1]+1, grid[y][x], grid[y-1][x-1]+1.5,
                     grid[y+1][x-1]+1.5, grid[y+1][x+1]+1.5, grid[y-1][x+1]+1.5]
         dirs[y][x] = np.argmin(a)
@@ -210,13 +218,13 @@ def computeShortestPaths(map, exitColor):
             continue
         visited[y][x] = 1
 
-        a = [grid[y-1][x]+1, grid[y+1][x]+1, grid[y][x+1]+1, 
+        a = [grid[y-1][x]+1, grid[y+1][x]+1, grid[y][x+1]+1,
                     grid[y][x-1]+1, grid[y][x], grid[y-1][x-1]+1.414,
                     grid[y+1][x-1]+1.414, grid[y+1][x+1]+1.414, grid[y-1][x+1]+1.414]
         dirs[y][x] = np.argmin(a)
         wallPenalty = max(0, 10-wallDist[y][x])
         grid[y][x] = min(a) + 2*wallPenalty
-        
+
         q.put((y-1,x))
         q.put((y+1,x))
         q.put((y,x+1))
@@ -232,7 +240,7 @@ def computeShortestPaths(map, exitColor):
 ################################################################################
 
 
-mapName = 'mona_lisa_rooms'
+mapName = 'mona_lisa_rooms_2'
 map = loadMap(mapName)
 
 wallDist, wallDirs, exit1Dist, exit1Dirs = (None,None,None,None)
@@ -256,19 +264,20 @@ except Exception as e:
 
 spawnPeople()
 totalPeople = len(personList)
+print(totalPeople)
 
 #cv2.line(img,(0,0),(511,511),(255,0,0),5)
 #cv2.circle(img,(50,50),18,(0,255,0),-1)
 
 
 
-for i in range(1000):
+for i in range(2000):
     img = np.copy(map)
     #cv2.circle(img,(int(i/2),250),18,(0,255,0),-1)
 
     for person in personList:
-        cv2.circle(img,(int(person.x),int(person.y)),int(r*person.radius)+2,(0,255,0),-1)
-    
+        cv2.circle(img,(int(person.x),int(person.y)),int(r*person.radius)+2,(255,0,0),-1)
+
     cv2.imshow('display',img)
     cv2.waitKey(10)
 
@@ -280,6 +289,7 @@ for i in range(1000):
     if totalExited == totalPeople:
         break
 
+print(totalExited)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
