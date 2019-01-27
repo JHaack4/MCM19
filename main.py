@@ -10,8 +10,10 @@ baseColor = [0,0,0]
 spawnColor = [0,255,0]
 backgroundColor = [255,255,255]
 
-draw = True
-cv2.namedWindow('display')
+draw = False
+
+if draw:
+    cv2.namedWindow('display')
 
 ################################################################################
 # Agent stuff
@@ -19,8 +21,9 @@ cv2.namedWindow('display')
 
 personList = []
 r = 3 # resolution in pixels/meter
-spawnRate = 0.04
-collisionForceThreshold = 2
+spawnRate = 0.001
+collisionForceThreshold = 1.2
+collisionInjury = .001
 
 class Person:
 
@@ -31,6 +34,8 @@ class Person:
         self.speed = (.5 + random.random())
         self.exited = False
         self.radius = (0.25 + 0.5*random.random())
+        self.collisions = 0
+        self.injured = False
 
 def letPeopleMove():
 
@@ -43,7 +48,7 @@ def letPeopleMove():
         shortestDir = dirsArray[exit1Dirs[y][x]]
         avoidWallsDir = dirsArray[wallDirs[y][x]]
         wallDistance = wallDist[y][x]
-        wallAvoidanceFactor = -2/(wallDistance+0.2)
+        wallAvoidanceFactor = -1/(wallDistance+0.1)
 
         numCollisions = 0
         desiredX = 0
@@ -57,7 +62,10 @@ def letPeopleMove():
             desiredX += xdir / (dist+1)
             desiredY += ydir / (dist+1)
             if dist < person.radius + otherPerson.radius + 1:
+                person.collisions += 1
                 numCollisions += 1
+                if random.random() < collisionInjury:
+                    person.injured = True
 
         desiredDist = ((desiredX)**2 + (desiredY)**2)**(.5)
         if desiredDist > collisionForceThreshold:
@@ -97,7 +105,7 @@ def spawnPeople():
 
 def determineClosePeople():
     b = 20 # bin size
-    distThresh = 5 # distance needed to be "close"
+    distThresh = 2 # distance needed to be "close"
     xx = int(map.shape[1] / b) + 2
     yy = int(map.shape[0] / b) + 2
     bins = [[[] for j in range(xx)] for i in range(yy)]
@@ -260,36 +268,88 @@ except Exception as e:
     pkl.dump(exit1Dirs,open('temp/' + mapName + 'exit1Dirs.pkl', 'wb'))
     print('...done')
 
+def simulate():
+
+    spawnPeople()
+    totalPeople = len(personList)
+    print(totalPeople)
+
+    #cv2.line(img,(0,0),(511,511),(255,0,0),5)
+    #cv2.circle(img,(50,50),18,(0,255,0),-1)
 
 
-spawnPeople()
-totalPeople = len(personList)
-print(totalPeople)
 
-#cv2.line(img,(0,0),(511,511),(255,0,0),5)
-#cv2.circle(img,(50,50),18,(0,255,0),-1)
+    for i in range(2000):
+        img = np.copy(map)
+        #cv2.circle(img,(int(i/2),250),18,(0,255,0),-1)
+        if draw:
+            for person in personList:
+                cv2.circle(img,(int(person.x),int(person.y)),int(r*person.radius)+2,(255,0,0),-1)
 
+            cv2.imshow('display',img)
+            cv2.waitKey(10)
 
+        if i % 10 == 0:
+            determineClosePeople()
+        letPeopleMove()
 
-for i in range(2000):
-    img = np.copy(map)
-    #cv2.circle(img,(int(i/2),250),18,(0,255,0),-1)
+        totalExited = sum([1 if p.exited else 0 for p in personList ])
+        if totalExited < .8*totalPeople:
+            time80 = i
+        if totalExited < .9*totalPeople:
+            time90 = i
+        if totalExited < .95*totalPeople:
+            time95 = i
+        if totalExited == totalPeople:
+            timeAll = i
+            break
 
-    for person in personList:
-        cv2.circle(img,(int(person.x),int(person.y)),int(r*person.radius)+2,(255,0,0),-1)
-
-    cv2.imshow('display',img)
-    cv2.waitKey(10)
-
-    if i % 10 == 0:
-        determineClosePeople()
-    letPeopleMove()
-
-    totalExited = sum([1 if p.exited else 0 for p in personList ])
     if totalExited == totalPeople:
-        break
+        nums.append(totalPeople)
+        t80s.append(time80)
+        t90s.append(time90)
+        t95s.append(time95)
+        tall.append(timeAll)
+        print("80%", time80)
+        print("90%", time90)
+        print("95%", time95)
+        print("all", timeAll)
+    else:
+        print("only escaped", totalExited)
+        print("80%", time80)
+        print("90%", time90)
+        print("95%", time95)
+    if draw:
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
-print(totalExited)
 
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+# to collect data to plot later
+nums = []
+t80s = []
+t90s = []
+t95s = []
+tall = []
+injuries = []
+
+# modify the range and the spawnRate to get a wide range of
+# densities
+for rate in range(1, 10):
+    personList = []
+    spawnRate = 0.008*rate
+    simulate()
+    totalCollisions = 0
+    numInjuries = 0
+    for person in personList:
+        totalCollisions += person.collisions
+        if person.injured:
+            numInjuries += 1
+    injuries.append(numInjuries)
+    print("injuries", numInjuries)
+
+print(nums)
+print(t80s)
+print(t90s)
+print(t95s)
+print(tall)
+print(injuries)
