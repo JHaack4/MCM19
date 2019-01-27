@@ -118,7 +118,7 @@ class Person(Actor):
         self.plan = []
         self.app = False
         self.leader = None
-        if random.random() < 0:
+        if random.random() < 0.005:
             self.app = True
             self.color = (0,0,255)
 
@@ -420,7 +420,7 @@ def computeShortestPaths(m, wallDist):
         random.shuffle(DIRECTION_ORDER)
         for i in DIRECTION_ORDER:
             d, l = DIRECTIONS[i], DIRECTION_LENGTHS[i]
-            new_dist = grid[tuple(p + d)] + l + wall_penalty
+            new_dist = grid[tuple(p + d)] + l - 2*max(0, 10-wallDist[tuple(p + d)]) + wall_penalty
             if new_dist < best_dist:
                 best_dir, best_dist = i, new_dist
 
@@ -434,8 +434,8 @@ def computeShortestPaths(m, wallDist):
             gridimg[y, x] = DIRECTION_COLORS[dirs[y, x]]
         # gridimg[y,x,2] = min(255,int(grid[y, x]*3))
 
-    # cv2.imshow('display', gridimg)
-    # cv2.waitKey(0)
+    cv2.imshow('display', gridimg)
+    cv2.waitKey(0)
     return grid, dirs
 
 def cached_load(fname, thunk):
