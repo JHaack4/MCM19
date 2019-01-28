@@ -5,6 +5,7 @@ import queue
 import pickle as pkl
 import random
 import scipy.spatial
+from skimage.morphology import skeletonize
 
 exitColor = [0,0,255]
 baseColor = [0,0,0]
@@ -25,9 +26,13 @@ DIRECTION_COLORS = [(0, 0, 0), (0, 0, 255), (0, 255, 0), (0, 255, 255), (255, 0,
 
 
 r = 3
-spawnRate = 0.1
+spawnRate = 0.02
 collisionForceThreshold = 1.2
 collisionInjury = .001
+maxEmergencyPersonnel = 0
+timeEmergencyPersonnel = 100 # how long before they spawn
+centroidPosition = (0,0)
+
 ################################################################################
 # Agent stuff
 ################################################################################
@@ -38,6 +43,7 @@ class Actor(object):
         self.closePeople = []
         self.color = (255,0,0)
         self.exited = False
+        self.consecutiveFramesStuck = 0
 
     @property
     def x(self):
@@ -212,19 +218,151 @@ class Person(Actor):
         if newLoc < 100000:
             self.x = desiredX
             self.y = desiredY
+            self.consecutiveFramesStuck = 0
+        else: # help out stuck people using teleportation
+            self.consecutiveFramesStuck += 1
+            if self.consecutiveFramesStuck > 5:
+                desiredX = self.x + 15*(random.random()-0.5)
+                desiredY = self.y + 15*(random.random()-0.5)
+                newLoc = exit1Dist[int(desiredY)][int(desiredX)]
+                if newLoc < 100000:
+                    self.x = desiredX
+                    self.y = desiredY
+                    self.consecutiveFramesStuck = 0
+            if self.consecutiveFramesStuck > 50:
+                self.color = (0,255,255)
 
         if exit1Dist[y][x] < 2:
             self.exited = True
 
-def spawnPeople(m):
-    personList = []
-    for y in range(m.shape[0]):
-        for x in range(m.shape[1]):
-            if not (m[y,x]==backgroundColor).all():
-                if random.random() < 0.001:
-                    p = Person(np.array([y, x]).astype(np.float64))
-                    personList.append(p)
-    return personList
+
+class Staff(Actor):
+    def __init__(self, p):
+        super().__init__(p)
+
+        self.speed = 0.5 + random.random()
+        self.state = None
+        self.framesNotAllowedToMove = 0
+        self.movingTowardsExit = False
+        self.roamingDirection = (0,0)
+
+        self.radius = (0.25 + 0.5*random.random())
+        self.collisions = 0
+        self.injured = False
+        self.exited = False
+
+        self.color = (255,255,0)
+
+    def move(self, personList):
+        self.framesNotAllowedToMove -= 1
+        if self.framesNotAllowedToMove > 0:
+            return
+
+        x = int(self.x)
+        y = int(self.y)
+
+        curLoc = exit1Dist[y][x]
+        if curLoc < 3:
+            self.movingTowardsExit = False
+            desiredX = self.x + 40*random.random() - 20
+            desiredY = self.y + 40*random.random() - 20
+            try:
+                newLoc = exit1Dist[int(desiredY)][int(desiredX)]
+                if newLoc < 100000 and newLoc > 3:
+                    self.x = desiredX
+                    self.y = desiredY
+            except Exception:
+                pass
+            return
+
+        shortestDir = np.array([0, 0])
+        shortestDir = DIRECTIONS[exit1Dirs[y, x]]
+
+        avoidWallsDir = np.array([0,0])
+        if wallDirs[y][x] != 255:
+            avoidWallsDir = DIRECTIONS[wallDirs[y][x]] / DIRECTION_LENGTHS[wallDirs[y][x]]
+        wallDistance = wallDist[y][x]
+
+        wallAvoidanceFactor = -7/(wallDistance+0.1)
+
+        numCollisions = 0
+
+        desiredX = 0
+        desiredY = 0
+
+        for j in self.closePeople:
+            otherPerson = personList[j]
+            if isinstance(otherPerson, Person):
+                xdir = (self.x-otherPerson.x)/r
+                ydir = (self.y-otherPerson.y)/r
+                dist = ((xdir)**2 + (ydir)**2)**(.5)
+                # if dist > 2:
+                #     continue
+                desiredX += xdir / (dist+1)
+                desiredY += ydir / (dist+1)
+                if dist < self.radius + otherPerson.radius + 1:
+                    self.collisions += 1
+                    numCollisions += 1
+                    if random.random() < collisionInjury/10:
+                        self.injured = True
+
+        desiredDist = ((desiredX)**2 + (desiredY)**2)**(.5)
+        if desiredDist > collisionForceThreshold:
+            desiredX = collisionForceThreshold*desiredX/desiredDist
+            desiredY = collisionForceThreshold*desiredY/desiredDist
+
+        speedFactor = 1 / (numCollisions + 1)
+        towardExit = 1 if self.movingTowardsExit else -1
+
+        desiredX += self.speed * speedFactor *towardExit* shortestDir[1] \
+                            + wallAvoidanceFactor * avoidWallsDir[1] \
+                            + self.roamingDirection[1]
+        desiredY += self.speed * speedFactor *towardExit* shortestDir[0] \
+                            + wallAvoidanceFactor * avoidWallsDir[0] \
+                            + self.roamingDirection[0]
+
+        if random.random() < 0.01:
+            self.roamingDirection = centroidPosition - self.p
+            self.roamingDirection = self.roamingDirection / ((self.roamingDirection[0]**2+self.roamingDirection[1]**2)**(0.5))
+            print("staff new roaming direction: " + str(self.roamingDirection))
+        if random.random() < 0.002 and self.movingTowardsExit:
+            self.movingTowardsExit = False
+        if random.random() < 0.001 and not self.movingTowardsExit:
+            self.movingTowardsExit = True
+
+
+        desiredX = self.x + r*desiredX/3
+        desiredY = self.y + r*desiredY/3
+        try:
+            newLoc = exit1Dist[int(desiredY)][int(desiredX)]
+            if newLoc < 100000:
+                self.x = desiredX
+                self.y = desiredY
+                self.consecutiveFramesStuck = 0
+            else: # help out stuck agents using teleportation
+                self.consecutiveFramesStuck += 1
+                if self.consecutiveFramesStuck > 5:
+                    desiredX = self.x + 30*(random.random()-0.5)
+                    desiredY = self.y + 30*(random.random()-0.5)
+                    newLoc = exit1Dist[int(desiredY)][int(desiredX)]
+                    if newLoc < 100000:
+                        self.x = desiredX
+                        self.y = desiredY
+                        self.consecutiveFramesStuck = 0
+        except Exception:
+            pass
+
+# def spawnPeople(m):
+#     personList = []
+#     numEmergencyPersonnel = 0
+#     for y in range(m.shape[0]):
+#         for x in range(m.shape[1]):
+#             if not (m[y,x]==backgroundColor).all():
+#                 if random.random() < 0.001:
+#                     p = Person(np.array([y, x]).astype(np.float64))
+#                     personList.append(p)
+            
+#     return personList
 
 def add_homing_chain(lst, chain, baseidx):
     for i in range(len(chain) - 1):
@@ -232,12 +370,20 @@ def add_homing_chain(lst, chain, baseidx):
 
 def spawnPeople(map):
     personList = []
+    numEmergencyPersonnel = 0
     for y in range(map.shape[0]):
         for x in range(map.shape[1]):
             if (map[y][x]==spawnColor).all():
                 if random.random() < spawnRate:
                     p = Person(np.array([y, x]).astype(np.float64))
                     personList.append(p)
+            if (m[y,x]==exitColor).all():
+                if numEmergencyPersonnel < maxEmergencyPersonnel:
+                    s = Staff(np.array([y, x]).astype(np.float64))
+                    personList.append(s)
+                    numEmergencyPersonnel += 1
+                    s.framesNotAllowedToMove = timeEmergencyPersonnel
+                    print("staff spawned")
 
     personList.append(HomingBeacon(np.array([210, 290]).astype(np.float64),0, np.array([170, 314]).astype(np.float64)))
     personList.append(HomingBeacon(np.array([210, 340]).astype(np.float64),50, np.array([170, 314]).astype(np.float64)))
@@ -356,7 +502,6 @@ def computeDistanceToWalls(m):
                             q.put(p + d)
 
     while q.qsize() > 0:
-        print(q.qsize())
         y, x = p = q.get()
 
         if y < 1 or x < 1 or y > M-2 or x > N-2:
@@ -380,8 +525,8 @@ def computeDistanceToWalls(m):
             gridimg[y, x] = DIRECTION_COLORS[dirs[y, x]]
         # gridimg[y,x,2] = min(255,int(grid[y, x]*3))
 
-    cv2.imshow('display', gridimg)
-    cv2.waitKey(0)
+    #cv2.imshow('display', gridimg)
+    #cv2.waitKey(0)
     return grid, dirs
 
 def computeShortestPaths(m, wallDist):
@@ -389,6 +534,7 @@ def computeShortestPaths(m, wallDist):
     grid = np.full((M, N), 100000.0)
     dirs = np.full((M, N), 255, np.uint8)
     gridimg = np.full((M, N, 3), 128, np.uint8)
+    visited = np.full((M, N), 0)
     q = queue.Queue()
 
     for y in range(m.shape[0]):
@@ -405,7 +551,6 @@ def computeShortestPaths(m, wallDist):
                             q.put(p + d)
 
     while q.qsize() > 0:
-        print(q.qsize())
         y, x = p = q.get()
 
         if y < 1 or x < 1 or y > M-2 or x > N-2:
@@ -413,6 +558,9 @@ def computeShortestPaths(m, wallDist):
 
         if (m[y, x]==backgroundColor).all():
             continue
+        if visited[y][x] > 0:
+            continue
+        visited[y][x] = 1
 
         wall_penalty = 2*max(0, 10-wallDist[y,x])
         
@@ -420,12 +568,12 @@ def computeShortestPaths(m, wallDist):
         random.shuffle(DIRECTION_ORDER)
         for i in DIRECTION_ORDER:
             d, l = DIRECTIONS[i], DIRECTION_LENGTHS[i]
-            new_dist = grid[tuple(p + d)] + l - 2*max(0, 10-wallDist[tuple(p + d)]) + wall_penalty
+            new_dist = grid[tuple(p + d)] + l #- 2*max(0, 10-wallDist[tuple(p + d)]) + wall_penalty
             if new_dist < best_dist:
                 best_dir, best_dist = i, new_dist
 
         if best_dir != -1:
-            dirs[y, x], grid[y, x] = best_dir, best_dist
+            dirs[y, x], grid[y, x] = best_dir, best_dist+wall_penalty
 
             for d in DIRECTIONS:
                 q.put(p + d)
@@ -434,8 +582,8 @@ def computeShortestPaths(m, wallDist):
             gridimg[y, x] = DIRECTION_COLORS[dirs[y, x]]
         # gridimg[y,x,2] = min(255,int(grid[y, x]*3))
 
-    cv2.imshow('display', gridimg)
-    cv2.waitKey(0)
+    #cv2.imshow('display', gridimg)
+    #cv2.waitKey(0)
     return grid, dirs
 
 def cached_load(fname, thunk):
@@ -460,35 +608,66 @@ mapName = 'mona_lisa_rooms_2'
 m = load_map(mapName)
 people = spawnPeople(m)
 
+# def skeleton(img):
+#     img = np.copy(img)
+#     element = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
+#     done = False
+#     size = np.size(img)
+#     skel = np.zeros(img.shape,np.uint8)
+
+#     while( not done):
+#         eroded = cv2.erode(img,element)
+#         temp = cv2.dilate(eroded,element)
+#         temp = cv2.subtract(img,temp)
+#         skel = cv2.bitwise_or(skel,temp)
+#         img = eroded.copy()
+    
+#         zeros = size - cv2.countNonZero(img)
+#         if zeros==size:
+#             done = True
+#     return skel
+# _,_,rimg = cv2.split(m)
+# _, dst = cv2.threshold(rimg, 250, 255, cv2.THRESH_BINARY)
+# dst = cv2.bitwise_not(dst)
+# skel = skeleton(dst)
+# cv2.imshow('display',skel)
+# cv2.waitKey(0)
+
 try:
-    wallDist = pkl.load(open('temp/' + mapName + 'wallDist.pkl', 'rb'))
-    wallDirs = pkl.load(open('temp/' + mapName + 'wallDirs.pkl', 'rb'))
-    exit1Dist = pkl.load(open('temp/' + mapName + 'exit1Dist.pkl', 'rb'))
-    exit1Dirs = pkl.load(open('temp/' + mapName + 'exit1Dirs.pkl', 'rb'))
+    wallDist = pkl.load(open('temp/' + mapName + 'wallDist2.pkl', 'rb'))
+    wallDirs = pkl.load(open('temp/' + mapName + 'wallDirs2.pkl', 'rb'))
+    exit1Dist = pkl.load(open('temp/' + mapName + 'exit1Dist2.pkl', 'rb'))
+    exit1Dirs = pkl.load(open('temp/' + mapName + 'exit1Dirs2.pkl', 'rb'))
 except Exception as e:
     print('recomputing distances...')
     wallDist, wallDirs = computeDistanceToWalls(m)
     exit1Dist, exit1Dirs = computeShortestPaths(m, wallDist)
-    pkl.dump(wallDist,open('temp/' + mapName + 'wallDist.pkl', 'wb'))
-    pkl.dump(wallDirs,open('temp/' + mapName + 'wallDirs.pkl', 'wb'))
-    pkl.dump(exit1Dist,open('temp/' + mapName + 'exit1Dist.pkl', 'wb'))
-    pkl.dump(exit1Dirs,open('temp/' + mapName + 'exit1Dirs.pkl', 'wb'))
+    pkl.dump(wallDist,open('temp/' + mapName + 'wallDist2.pkl', 'wb'))
+    pkl.dump(wallDirs,open('temp/' + mapName + 'wallDirs2.pkl', 'wb'))
+    pkl.dump(exit1Dist,open('temp/' + mapName + 'exit1Dist2.pkl', 'wb'))
+    pkl.dump(exit1Dirs,open('temp/' + mapName + 'exit1Dirs2.pkl', 'wb'))
     print('...done')
 
 def main():
     cv2.namedWindow('display')
     actors = people
 
-    for i in range(1000):
+    for i in range(2000):
         img = np.copy(m)
 
         if i % 5 == 0:
             determineClosePeople(m, actors)
 
+        centroidPosition = (0,0)
         for actor in actors:
             actor.move(actors)
             actor.draw(img)
+            if not actor.exited:
+                centroidPosition += actor.p
+        centroidPosition /= len(actors)
 
         cv2.imshow('display',img)
         cv2.waitKey(10)
 
+if __name__ == '__main__':
+    main()
