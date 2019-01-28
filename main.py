@@ -334,9 +334,9 @@ injuries = []
 
 # modify the range and the spawnRate to get a wide range of
 # densities
-for rate in range(1, 10):
+for rate in range(1, 80):
     personList = []
-    spawnRate = 0.008*rate
+    spawnRate = 0.001*rate
     simulate()
     totalCollisions = 0
     numInjuries = 0
