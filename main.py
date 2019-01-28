@@ -10,7 +10,7 @@ baseColor = [0,0,0]
 spawnColor = [0,255,0]
 backgroundColor = [255,255,255]
 
-draw = False
+draw = True
 
 if draw:
     cv2.namedWindow('display')
